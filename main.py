@@ -34,8 +34,6 @@ WORKSHEET_NAME = "Data"
 SPECIAL_ROWS = ['TOTAL', 'Liabilities', 'GRAND TOTAL', 'Increase']
 CURRENCY_SYMBOL = "₹"
 TEMPLATE_URL = st.secrets.google_sheets.template_url
-YOUR_SHEET_URL = st.secrets.google_sheets.sheet_url
-
 
 # --- Helper function for Indian Numbering System ---
 def format_inr(num):
@@ -48,17 +46,7 @@ def format_inr(num):
     formatted_rest = re.sub(r'(\d)(?=(\d{2})+(?!\d))', r'\1,', rest)
     return f"{formatted_rest},{last_three}"
 
-
 # --- Core Data Handling Functions (for multi-user support) ---
-@st.cache_data
-def get_sheet_id_from_url():
-    # Use st.experimental_get_query_params() for robustness on Streamlit Cloud
-    params = st.experimental_get_query_params()
-    if "sheet_id" in params and params["sheet_id"]:
-        # The result is a list, so we take the first element
-        return params["sheet_id"][0]
-    return None
-
 @st.cache_resource(ttl=600)
 def connect_to_gsheet(sheet_id):
     scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
@@ -104,7 +92,6 @@ def save_data(df, sheet_id):
     st.cache_data.clear()
     st.cache_resource.clear()
 
-
 # --- Page Rendering Functions ---
 
 def render_welcome_page():
@@ -134,8 +121,7 @@ def render_welcome_page():
         user_sheet_id = st.text_input("Paste your Google Sheet ID here:", key="user_sheet_id_input")
         if user_sheet_id:
             st.success("✅ Success! Here is your permanent link. **Bookmark it!**")
-            app_url = f"/?sheet_id={user_sheet_id}"
-            st.link_button("Go to My Dashboard", app_url, use_container_width=True)
+            st.link_button("Go to My Dashboard", f"/?sheet_id={user_sheet_id}", use_container_width=True)
 
 def render_dashboard(df):
     df = df.copy()
@@ -248,7 +234,7 @@ def render_dashboard(df):
 
     with st.expander("View & Export Raw Data"):
         st.dataframe(df)
-        
+
 def render_update_page(df, sheet_id):
     df = df.copy()
     st.title("✍️ Update Monthly Data")
@@ -453,37 +439,60 @@ def render_projections_page(df):
 
 # --- Main Application Logic ---
 
-sheet_id = get_sheet_id_from_url()
+# 1. Initialize session state keys if they don't exist.
+if 'sheet_id' not in st.session_state:
+    st.session_state.sheet_id = None
+if 'page_selection' not in st.session_state:
+    st.session_state.page_selection = "Dashboard"
 
-if not sheet_id:
-    # If no sheet_id is in the URL, show the setup page and stop.
+# 2. Check URL for a new sheet_id ONLY if one isn't already set in the session.
+if st.session_state.sheet_id is None:
+    # Use the modern st.query_params
+    if st.query_params.get("sheet_id"):
+        st.session_state.sheet_id = st.query_params.get("sheet_id")
+
+# --- Main App Flow ---
+
+# 3. All subsequent logic is now based on st.session_state, which is stable.
+if not st.session_state.sheet_id:
+    # If, after all checks, we still have no ID, show the welcome page.
     render_welcome_page()
 else:
     # If we have a sheet_id, show the main app.
     with st.sidebar:
         st.sidebar.title("Pro Net Worth Tracker")
+        # Use a callback to update the page selection in session state
+        def update_page():
+            st.session_state.page_selection = st.session_state.navigation_menu_key
+        
+        # This will be used by the routing logic below
         page_selection = option_menu(
             menu_title="Navigation",
             options=["Dashboard", "Update Data", "Manage Data", "Projections"],
             icons=["house-door-fill", "pencil-square", "gear-fill", "graph-up-arrow"],
-            menu_icon="compass-fill", default_index=0,
-            key='navigation_menu'
+            menu_icon="compass-fill",
+            default_index=0,
+            key='navigation_menu_key' # A unique key for the widget
         )
+        
         st.sidebar.header("🎯 Goal Setting")
-        if 'target_amount' not in st.session_state: st.session_state.target_amount = 5_000_000
-        if 'target_date' not in st.session_state: st.session_state.target_date = date(2028, 1, 1)
+        if 'target_amount' not in st.session_state:
+            st.session_state.target_amount = 5_000_000
+        if 'target_date' not in st.session_state:
+            st.session_state.target_date = date(2028, 1, 1)
+            
         st.sidebar.number_input(f"Net Worth Target ({CURRENCY_SYMBOL})", key="target_amount", step=100_000, format="%d")
         st.sidebar.date_input("Target Date", key="target_date")
 
-    # Load data using the ID from the URL
-    df_main = load_data(sheet_id)
+    # Load data using the ID from the session state
+    df_main = load_data(st.session_state.sheet_id)
 
-    # Route to the correct page, passing the sheet_id to pages that need it for saving
+    # Route to the correct page based on the direct return value of the widget
     if page_selection == "Dashboard":
         render_dashboard(df_main)
     elif page_selection == "Update Data":
-        render_update_page(df_main, sheet_id)
+        render_update_page(df_main, st.session_state.sheet_id)
     elif page_selection == "Manage Data":
-        render_manage_page(df_main, sheet_id)
+        render_manage_page(df_main, st.session_state.sheet_id)
     elif page_selection == "Projections":
         render_projections_page(df_main)
