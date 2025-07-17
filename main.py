@@ -16,18 +16,18 @@ from streamlit_option_menu import option_menu
 st.set_page_config(layout="wide", page_title="Pro Net Worth Tracker", initial_sidebar_state="expanded")
 
 # --- CSS to hide the top header space ---
-st.markdown("""
-<style>
-    header { visibility: hidden; }
-    .stApp { background-color: #F0F2F6; }
-    .main .block-container { padding-top: 2rem; padding-bottom: 2rem; }
-    h1, h2, h3 { font-weight: 600; color: #1E293B; }
-    [data-testid="stVerticalBlock"] > [style*="flex-direction: column;"] > [data-testid="stVerticalBlock"] {
-        border: 1px solid #E2E8F0; border-radius: 0.5rem; padding: 1rem 1.5rem 1.5rem 1.5rem;
-        background-color: white; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
-    }
-</style>
-""", unsafe_allow_html=True)
+# st.markdown("""
+# <style>
+#     header { visibility: hidden; }
+#     .stApp { background-color: #F0F2F6; }
+#     .main .block-container { padding-top: 2rem; padding-bottom: 2rem; }
+#     h1, h2, h3 { font-weight: 600; color: #1E293B; }
+#     [data-testid="stVerticalBlock"] > [style*="flex-direction: column;"] > [data-testid="stVerticalBlock"] {
+#         border: 1px solid #E2E8F0; border-radius: 0.5rem; padding: 1rem 1.5rem 1.5rem 1.5rem;
+#         background-color: white; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+#     }
+# </style>
+# """, unsafe_allow_html=True)
 
 # --- App Configuration from Secrets ---
 WORKSHEET_NAME = "Data"
