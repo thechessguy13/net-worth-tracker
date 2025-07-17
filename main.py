@@ -52,8 +52,11 @@ def format_inr(num):
 # --- Core Data Handling Functions (for multi-user support) ---
 @st.cache_data
 def get_sheet_id_from_url():
-    if 'sheet_id' in st.query_params:
-        return st.query_params['sheet_id']
+    # Use st.experimental_get_query_params() for robustness on Streamlit Cloud
+    params = st.experimental_get_query_params()
+    if "sheet_id" in params and params["sheet_id"]:
+        # The result is a list, so we take the first element
+        return params["sheet_id"][0]
     return None
 
 @st.cache_resource(ttl=600)
