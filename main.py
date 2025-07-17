@@ -15,25 +15,17 @@ from streamlit_option_menu import option_menu
 # --- Configuration and Constants ---
 st.set_page_config(layout="wide", page_title="Pro Net Worth Tracker", initial_sidebar_state="expanded")
 
-# --- CSS to hide the top header space ---
-# st.markdown("""
-# <style>
-#     header { visibility: hidden; }
-#     .stApp { background-color: #F0F2F6; }
-#     .main .block-container { padding-top: 2rem; padding-bottom: 2rem; }
-#     h1, h2, h3 { font-weight: 600; color: #1E293B; }
-#     [data-testid="stVerticalBlock"] > [style*="flex-direction: column;"] > [data-testid="stVerticalBlock"] {
-#         border: 1px solid #E2E8F0; border-radius: 0.5rem; padding: 1rem 1.5rem 1.5rem 1.5rem;
-#         background-color: white; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
-#     }
-# </style>
-# """, unsafe_allow_html=True)
+# --- CSS ---
+#st.markdown("""<style>header { visibility: hidden; } .stApp { background-color: #F0F2F6; } .main .block-container { padding-top: 2rem; } h1, h2, h3 { font-weight: 600; color: #1E293B; } [data-testid="stVerticalBlock"] > [style*="flex-direction: column;"] > [data-testid="stVerticalBlock"] { border: 1px solid #E2E8F0; border-radius: 0.5rem; padding: 1rem 1.5rem 1.5rem 1.5rem; background-color: white; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1); }</style>""", unsafe_allow_html=True)
 
 # --- App Configuration from Secrets ---
 WORKSHEET_NAME = "Data"
+SETTINGS_WORKSHEET_NAME = "Settings"
 SPECIAL_ROWS = ['TOTAL', 'Liabilities', 'GRAND TOTAL', 'Increase']
 CURRENCY_SYMBOL = "₹"
 TEMPLATE_URL = st.secrets.google_sheets.template_url
+DEMO_SHEET_ID = st.secrets.google_sheets.demo_sheet_id
+
 
 # --- Helper function for Indian Numbering System ---
 def format_inr(num):
@@ -46,20 +38,16 @@ def format_inr(num):
     formatted_rest = re.sub(r'(\d)(?=(\d{2})+(?!\d))', r'\1,', rest)
     return f"{formatted_rest},{last_three}"
 
-# --- Core Data Handling Functions (for multi-user support) ---
+# --- Core Data Handling Functions ---
 @st.cache_resource(ttl=600)
 def connect_to_gsheet(sheet_id):
-    scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
-    creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
-    client = gspread.authorize(creds)
     try:
-        spreadsheet = client.open_by_key(sheet_id)
-        return spreadsheet
-    except gspread.exceptions.APIError:
-        st.error(f"Error accessing Google Sheet. Please check the Sheet ID and make sure you have shared it with the service account email: `{st.secrets.gcp_service_account.client_email}`", icon="🚨")
-        return None
+        scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+        creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
+        client = gspread.authorize(creds)
+        return client.open_by_key(sheet_id)
     except Exception as e:
-        st.error(f"An unexpected error occurred: {e}", icon="🚨")
+        st.error(f"Error connecting to Google Sheets. Please ensure the Sheet ID is correct and shared with `{st.secrets.gcp_service_account.client_email}`.", icon="🚨")
         return None
 
 @st.cache_data(ttl=60)
@@ -77,7 +65,7 @@ def load_data(sheet_id):
         sorted_dates = pd.to_datetime(date_cols).sort_values().strftime('%Y-%m-%d').tolist()
         return df[id_cols + sorted_dates]
     except gspread.exceptions.WorksheetNotFound:
-        st.error(f"Worksheet '{WORKSHEET_NAME}' not found. Please ensure your sheet has a tab with this exact name and that you've given Editor permissions to the app's service email.", icon="🚨")
+        st.error(f"Data worksheet '{WORKSHEET_NAME}' not found. Please ensure your sheet has a tab with this exact name.", icon="🚨")
         st.stop()
 
 def save_data(df, sheet_id):
@@ -85,12 +73,42 @@ def save_data(df, sheet_id):
     if spreadsheet is None: st.stop()
     try:
         worksheet = spreadsheet.worksheet(WORKSHEET_NAME)
+        set_with_dataframe(worksheet, df, resize=True)
+        st.cache_data.clear()
+        st.cache_resource.clear()
+    except Exception as e:
+        st.error(f"Could not save data: {e}")
+
+@st.cache_data(ttl=60)
+def load_settings(sheet_id):
+    spreadsheet = connect_to_gsheet(sheet_id)
+    if spreadsheet is None: return {}
+    try:
+        worksheet = spreadsheet.worksheet(SETTINGS_WORKSHEET_NAME)
+        settings_df = get_as_dataframe(worksheet, usecols=[0, 1], header=0).dropna()
+        return dict(zip(settings_df['Key'], settings_df['Value']))
     except gspread.exceptions.WorksheetNotFound:
-        worksheet = spreadsheet.add_worksheet(title=WORKSHEET_NAME, rows=100, cols=50)
-    df.fillna('', inplace=True)
-    set_with_dataframe(worksheet, df)
-    st.cache_data.clear()
-    st.cache_resource.clear()
+        return {'target_amount': '5000000', 'target_date': '2030-01-01'}
+
+def save_settings(sheet_id, new_settings):
+    spreadsheet = connect_to_gsheet(sheet_id)
+    if spreadsheet is None: return
+    try:
+        worksheet = spreadsheet.worksheet(SETTINGS_WORKSHEET_NAME)
+    except gspread.exceptions.WorksheetNotFound:
+        worksheet = spreadsheet.add_worksheet(title=SETTINGS_WORKSHEET_NAME, rows=10, cols=2)
+        worksheet.update('A1:B1', [['Key', 'Value']])
+        worksheet.update('A2:B2', [['target_amount'], ['target_date']])
+
+    updates = []
+    if 'target_amount' in new_settings:
+        updates.append(gspread.cell.Cell(2, 2, str(new_settings['target_amount'])))
+    if 'target_date' in new_settings:
+        updates.append(gspread.cell.Cell(3, 2, str(new_settings['target_date'])))
+    
+    if updates:
+        worksheet.update_cells(updates)
+    load_settings.clear()
 
 # --- Page Rendering Functions ---
 
@@ -98,26 +116,21 @@ def render_welcome_page():
     st.title("👋 Welcome to the Pro Net Worth Tracker!")
     st.markdown("This app helps you track your net worth using your own private Google Sheet.")
     
+    st.link_button("🚀 Try a Live Demo", f"/?sheet_id={DEMO_SHEET_ID}", use_container_width=True, type="primary")
+    st.markdown("<h5 style='text-align: center; color: grey;'>- OR -</h5>", unsafe_allow_html=True)
+    
     with st.container(border=True):
-        st.header("1️⃣ Create Your Data Sheet")
+        st.header("Set Up Your Own Tracker in 3 Steps")
+        st.markdown("**Step 1: Create Your Data Sheet**")
         st.markdown("Click the button below to make a private copy of the data template in your own Google Drive.")
-        st.link_button("📋 Make a Copy of the Template Sheet", TEMPLATE_URL, type="primary")
+        st.link_button("📋 Make a Copy of the Template Sheet", TEMPLATE_URL)
 
-    with st.container(border=True):
-        st.header("2️⃣ Share Your New Sheet with the App")
-        st.markdown(f"""
-        In your new sheet, click the **Share** button (top right) and invite the email address below as an **Editor**. 
-        This allows the app to read and write your data. It cannot access any of your other files.
-        """)
+        st.markdown("**Step 2: Share Your New Sheet with the App**")
+        st.markdown(f"In your new sheet, click **Share** (top right) and invite the email below as an **Editor**.")
         st.code(st.secrets.gcp_service_account.client_email, language=None)
 
-    with st.container(border=True):
-        st.header("3️⃣ Get Your Personalized App Link")
-        st.markdown("""
-        - Look at the URL of your new sheet. It will be like: `.../spreadsheets/d/`**`1aBcDeFgHiJkLmNoPqRsTuVwXyZ...`**`/edit`
-        - Copy that long string of characters in the middle (your **Sheet ID**).
-        - Paste it below to generate your permanent, private link to your dashboard.
-        """)
+        st.markdown("**Step 3: Get Your Personalized App Link**")
+        st.markdown("Copy your new **Sheet ID** from its URL (`.../d/`**`SHEET_ID`**`/edit`) and paste it below.")
         user_sheet_id = st.text_input("Paste your Google Sheet ID here:", key="user_sheet_id_input")
         if user_sheet_id:
             st.success("✅ Success! Here is your permanent link. **Bookmark it!**")
@@ -232,7 +245,7 @@ def render_dashboard(df):
         else:
             st.info("Area chart requires at least two months of data.")
 
-    with st.expander("View & Export Raw Data"):
+    with st.expander("View Raw Data"):
         st.dataframe(df)
 
 def render_update_page(df, sheet_id):
@@ -439,21 +452,16 @@ def render_projections_page(df):
 
 # --- Main Application Logic ---
 
-# 1. Initialize session state keys if they don't exist.
+# 1. Initialize session state key if it doesn't exist.
 if 'sheet_id' not in st.session_state:
     st.session_state.sheet_id = None
-if 'page_selection' not in st.session_state:
-    st.session_state.page_selection = "Dashboard"
 
 # 2. Check URL for a new sheet_id ONLY if one isn't already set in the session.
 if st.session_state.sheet_id is None:
-    # Use the modern st.query_params
     if st.query_params.get("sheet_id"):
         st.session_state.sheet_id = st.query_params.get("sheet_id")
 
 # --- Main App Flow ---
-
-# 3. All subsequent logic is now based on st.session_state, which is stable.
 if not st.session_state.sheet_id:
     # If, after all checks, we still have no ID, show the welcome page.
     render_welcome_page()
@@ -461,33 +469,50 @@ else:
     # If we have a sheet_id, show the main app.
     with st.sidebar:
         st.sidebar.title("Pro Net Worth Tracker")
-        # Use a callback to update the page selection in session state
-        def update_page():
-            st.session_state.page_selection = st.session_state.navigation_menu_key
         
-        # This will be used by the routing logic below
+        # Load user-specific settings from their sheet
+        user_settings = load_settings(st.session_state.sheet_id)
+        
+        # Initialize session state for goals using loaded settings
+        try:
+            target_amount_default = int(float(user_settings.get('target_amount', 5000000)))
+            target_date_default = datetime.strptime(user_settings.get('target_date', '2030-01-01'), '%Y-%m-%d').date()
+        except (ValueError, TypeError):
+            # Fallback if data in sheet is corrupt
+            target_amount_default = 5000000
+            target_date_default = date(2030, 1, 1)
+
+        def on_goal_change():
+            new_settings = {
+                'target_amount': st.session_state.target_amount_input,
+                'target_date': st.session_state.target_date_input.strftime('%Y-%m-%d')
+            }
+            save_settings(st.session_state.sheet_id, new_settings)
+            # We also update the main session state value after saving
+            st.session_state.target_amount = st.session_state.target_amount_input
+            st.session_state.target_date = st.session_state.target_date_input
+            
         page_selection = option_menu(
             menu_title="Navigation",
             options=["Dashboard", "Update Data", "Manage Data", "Projections"],
             icons=["house-door-fill", "pencil-square", "gear-fill", "graph-up-arrow"],
-            menu_icon="compass-fill",
-            default_index=0,
-            key='navigation_menu_key' # A unique key for the widget
+            menu_icon="compass-fill", default_index=0, key='navigation_menu'
         )
         
         st.sidebar.header("🎯 Goal Setting")
+        st.number_input(f"Net Worth Target ({CURRENCY_SYMBOL})", key="target_amount_input", value=target_amount_default, step=100_000, format="%d", on_change=on_goal_change)
+        st.date_input("Target Date", key="target_date_input", value=target_date_default, on_change=on_goal_change)
+
+        # Ensure main state variables exist for the rest of the app to use
         if 'target_amount' not in st.session_state:
-            st.session_state.target_amount = 5_000_000
+            st.session_state.target_amount = target_amount_default
         if 'target_date' not in st.session_state:
-            st.session_state.target_date = date(2028, 1, 1)
-            
-        st.sidebar.number_input(f"Net Worth Target ({CURRENCY_SYMBOL})", key="target_amount", step=100_000, format="%d")
-        st.sidebar.date_input("Target Date", key="target_date")
+            st.session_state.target_date = target_date_default
 
     # Load data using the ID from the session state
     df_main = load_data(st.session_state.sheet_id)
 
-    # Route to the correct page based on the direct return value of the widget
+    # Route to the correct page
     if page_selection == "Dashboard":
         render_dashboard(df_main)
     elif page_selection == "Update Data":
